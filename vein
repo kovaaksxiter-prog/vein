@@ -23,7 +23,8 @@ local Config = {
 -- =========================
 -- SAFE ANIMATIONS
 -- =========================
-local SAFE_ANIMATIONS = {
+local SAFE_ANIMATIONS = { 
+    
     ["180426354"] = true,
     ["180435792"] = true,
     ["180435557"] = true,
