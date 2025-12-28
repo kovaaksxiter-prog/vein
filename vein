@@ -1,5 +1,6 @@
--- AUTO COMBAT CORE (NO GUI)
-
+-- ======================================================
+-- LIBS
+-- ======================================================
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
@@ -7,28 +8,48 @@ local RunService = game:GetService("RunService")
 
 local LOCAL_PLAYER = Players.LocalPlayer
 
--- ================= CONFIG =================
+-- ======================================================
+-- FLUENT UI
+-- ======================================================
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+
+local Window = Fluent:CreateWindow({
+    Title = "Auto Combat",
+    SubTitle = "vein",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(600, 480),
+    Acrylic = true,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+local Tabs = {
+    Combat = Window:AddTab({ Title = "Combat" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
+}
+
+local Options = Fluent.Options
+
+-- ======================================================
+-- CONFIG (CONTROLADO PELA UI)
+-- ======================================================
 local CONFIG = {
     AutoBlock = true,
     AutoClash = true,
-
     BlockRadius = 11,
-
     BlockPressDelay = 0,
     BlockReleaseDelay = 0,
-
-    ClashKey = Enum.KeyCode.F, -- MUDA AQUI
-
     IgnoreOutsideArena = true,
-    ArenaPartName = "Arena", -- MUDA PRO NOME REAL
-
-    DisableWhenAFK = true,
-    DisableEndRound = true
+    ArenaPartName = "Arena"
 }
 
--- SAFE ANIMATIONS
+-- ======================================================
+-- SAFE ANIMATIONS (INTACTO)
+-- ======================================================
 local SAFE_ANIMATIONS = {
-
+    
     ["180426354"] = true,
     ["180435792"] = true,
     ["180435557"] = true,
@@ -150,7 +171,95 @@ local SAFE_ANIMATIONS = {
     ["80008594862427"] = true
 }
 
--- ================= UTILS =================
+-- ======================================================
+-- UI - COMBAT
+-- ======================================================
+Tabs.Combat:AddToggle("AutoBlock", {
+    Title = "Auto Block",
+    Default = true
+}):OnChanged(function(v)
+    CONFIG.AutoBlock = v
+end)
+
+Tabs.Combat:AddToggle("AutoClash", {
+    Title = "Auto Clash",
+    Default = true
+}):OnChanged(function(v)
+    CONFIG.AutoClash = v
+end)
+
+Tabs.Combat:AddSlider("Radius", {
+    Title = "Block Radius",
+    Min = 5,
+    Max = 25,
+    Default = 11,
+    Rounding = 1
+}):OnChanged(function(v)
+    CONFIG.BlockRadius = v
+end)
+
+Tabs.Combat:AddSlider("PressDelay", {
+    Title = "Block Press Delay",
+    Min = 0,
+    Max = 0.3,
+    Default = 0,
+    Rounding = 2
+}):OnChanged(function(v)
+    CONFIG.BlockPressDelay = v
+end)
+
+Tabs.Combat:AddSlider("ReleaseDelay", {
+    Title = "Block Release Delay",
+    Min = 0,
+    Max = 0.3,
+    Default = 0,
+    Rounding = 2
+}):OnChanged(function(v)
+    CONFIG.BlockReleaseDelay = v
+end)
+
+Tabs.Combat:AddToggle("IgnoreArena", {
+    Title = "Ignore Outside Arena",
+    Default = true
+}):OnChanged(function(v)
+    CONFIG.IgnoreOutsideArena = v
+end)
+
+-- ======================================================
+-- STREAM MODE
+-- ======================================================
+local STREAM_MODE = false
+local HOLD_START
+
+Tabs.Settings:AddToggle("StreamMode", {
+    Title = "Stream Mode (Hide UI)",
+    Default = false
+}):OnChanged(function(v)
+    STREAM_MODE = v
+    Window:SetVisible(not v)
+end)
+
+UserInputService.InputBegan:Connect(function(i,gp)
+    if gp then return end
+    if i.KeyCode == Enum.KeyCode.RightShift and STREAM_MODE then
+        HOLD_START = tick()
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(i)
+    if i.KeyCode == Enum.KeyCode.RightShift and STREAM_MODE then
+        if HOLD_START and tick() - HOLD_START >= 2 then
+            Options.StreamMode:SetValue(false)
+            Window:SetVisible(true)
+            STREAM_MODE = false
+        end
+        HOLD_START = nil
+    end
+end)
+
+-- ======================================================
+-- COMBAT CORE
+-- ======================================================
 local function normalizeId(id)
     return id:match("id=(%d+)") or id:match("%d+")
 end
@@ -159,124 +268,88 @@ local function getRoot(char)
     return char and char:FindFirstChild("HumanoidRootPart")
 end
 
-local function distance(p1, p2)
-    return (p1.Position - p2.Position).Magnitude
+local function distance(a,b)
+    return (a.Position - b.Position).Magnitude
 end
 
--- ================= ARENA CHECK =================
 local ArenaPart = workspace:FindFirstChild(CONFIG.ArenaPartName)
 
 local function inArena(char)
-    if not CONFIG.IgnoreOutsideArena then return true end
-    if not ArenaPart then return true end
-
+    if not CONFIG.IgnoreOutsideArena or not ArenaPart then return true end
     local root = getRoot(char)
     if not root then return false end
-
     local pos = ArenaPart.CFrame:PointToObjectSpace(root.Position)
-    local size = ArenaPart.Size / 2
-
-    return math.abs(pos.X) <= size.X
-        and math.abs(pos.Y) <= size.Y
-        and math.abs(pos.Z) <= size.Z
+    local s = ArenaPart.Size / 2
+    return math.abs(pos.X)<=s.X and math.abs(pos.Y)<=s.Y and math.abs(pos.Z)<=s.Z
 end
 
--- ================= AFK CHECK =================
-local function isAFK(player)
-    if not CONFIG.DisableWhenAFK then return false end
-
-    local afk = player:FindFirstChild("AFK")
-    if afk and afk.Value == true then
-        return true
-    end
-
-    return false
-end
-
--- ================= END ROUND CHECK =================
-local function endRound()
-    if not CONFIG.DisableEndRound then return false end
-    local char = LOCAL_PLAYER.Character
-    local hum = char and char:FindFirstChild("Humanoid")
-    return hum and hum.Health <= 0
-end
-
--- ================= BLOCK =================
 local function doBlock(track)
     task.wait(CONFIG.BlockPressDelay)
-    VirtualUser:Button2Down(Vector2.new(), workspace.CurrentCamera.CFrame)
+    VirtualUser:Button2Down(Vector2.zero, workspace.CurrentCamera.CFrame)
     track.Stopped:Wait()
     task.wait(CONFIG.BlockReleaseDelay)
-    VirtualUser:Button2Up(Vector2.new(), workspace.CurrentCamera.CFrame)
+    VirtualUser:Button2Up(Vector2.zero, workspace.CurrentCamera.CFrame)
 end
 
--- ================= AUTO CLASH =================
-local ClashHeld = false
-
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == CONFIG.ClashKey then
-        ClashHeld = true
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.KeyCode == CONFIG.ClashKey then
-        ClashHeld = false
-    end
-end)
-
--- ================= HANDLE ANIMATION =================
 local function handleAnimation(player, track)
     if not CONFIG.AutoBlock then return end
     if player == LOCAL_PLAYER then return end
-    if endRound() then return end
-    if isAFK(LOCAL_PLAYER) then return end
-    if UserInputService:GetFocusedTextBox() then return end
-
-    local char = player.Character
-    local localChar = LOCAL_PLAYER.Character
-    if not (char and localChar) then return end
-
-    if not inArena(char) or not inArena(localChar) then return end
 
     local id = normalizeId(track.Animation.AnimationId)
     if SAFE_ANIMATIONS[id] then return end
 
-    local r1 = getRoot(char)
-    local r2 = getRoot(localChar)
-    if not (r1 and r2) then return end
+    local c1 = player.Character
+    local c2 = LOCAL_PLAYER.Character
+    if not (c1 and c2) then return end
+    if not inArena(c1) or not inArena(c2) then return end
 
-    if distance(r1, r2) > CONFIG.BlockRadius then return end
+    local r1 = getRoot(c1)
+    local r2 = getRoot(c2)
+    if not (r1 and r2) then return end
+    if distance(r1,r2) > CONFIG.BlockRadius then return end
 
     task.spawn(function()
-        if CONFIG.AutoClash and ClashHeld then
-            VirtualUser:Button1Down(Vector2.new(), workspace.CurrentCamera.CFrame)
+        if CONFIG.AutoClash then
+            VirtualUser:Button1Down(Vector2.zero, workspace.CurrentCamera.CFrame)
             task.wait(0.05)
-            VirtualUser:Button1Up(Vector2.new(), workspace.CurrentCamera.CFrame)
+            VirtualUser:Button1Up(Vector2.zero, workspace.CurrentCamera.CFrame)
         else
             doBlock(track)
         end
     end)
 end
 
--- ================= TRACK PLAYERS =================
-local function trackPlayer(player)
+local function trackPlayer(p)
     local function onChar(char)
         local hum = char:WaitForChild("Humanoid")
         local animator = hum:WaitForChild("Animator")
-
         animator.AnimationPlayed:Connect(function(track)
-            handleAnimation(player, track)
+            handleAnimation(p, track)
         end)
     end
-
-    if player.Character then onChar(player.Character) end
-    player.CharacterAdded:Connect(onChar)
+    if p.Character then onChar(p.Character) end
+    p.CharacterAdded:Connect(onChar)
 end
 
-for _, p in ipairs(Players:GetPlayers()) do
+for _,p in ipairs(Players:GetPlayers()) do
     trackPlayer(p)
 end
-
 Players.PlayerAdded:Connect(trackPlayer)
+
+-- ======================================================
+-- SAVE / INTERFACE
+-- ======================================================
+SaveManager:SetLibrary(Fluent)
+InterfaceManager:SetLibrary(Fluent)
+SaveManager:IgnoreThemeSettings()
+InterfaceManager:SetFolder("AutoCombat")
+SaveManager:SetFolder("AutoCombat/configs")
+InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+SaveManager:BuildConfigSection(Tabs.Settings)
+SaveManager:LoadAutoloadConfig()
+
+Fluent:Notify({
+    Title = "Loaded",
+    Content = "Auto Combat Ready",
+    Duration = 5
+})
