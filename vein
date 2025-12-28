@@ -1,4 +1,4 @@
--- AUTO BLOCK CORE (NO GUI / UI READY)
+-- AUTO BLOCKER NO GUI VERSION
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -6,26 +6,23 @@ local VirtualUser = game:GetService("VirtualUser")
 
 local LOCAL_PLAYER = Players.LocalPlayer
 
--- =========================
--- CONFIG (UI FRIENDLY)
--- =========================
-local Config = {
-    Enabled = true,
-    Radius = 11,
+-- CONFIG
+local ENABLED = true
+local RADIUS = 11
+local BLOCK_DELAY = 0 -- ms
+local BLOCK_RELEASE_DELAY = 0 -- ms
+local TOGGLE_KEY = Enum.KeyCode.B
 
-    -- delays em ms
-    BlockPressDelay = 0,
-    BlockReleaseDelay = 0,
+-- ATTACK HIGHLIGHT CONFIG
+local ATTACK_HIGHLIGHT_ENABLED = true
+local HIGHLIGHT_COLOR = Color3.fromRGB(255, 0, 0)
+local HIGHLIGHT_FILL_TRANSPARENCY = 0.5
+local HIGHLIGHT_OUTLINE_TRANSPARENCY = 0
 
-    ToggleKey = Enum.KeyCode.B
-}
-
--- =========================
 -- SAFE ANIMATIONS
--- =========================
-local SAFE_ANIMATIONS = { 
+local SAFE_ANIMATIONS = {
     
-    ["180426354"] = true,
+["180426354"] = true,
     ["180435792"] = true,
     ["180435557"] = true,
     ["180435571"] = true,
@@ -145,9 +142,8 @@ local SAFE_ANIMATIONS = {
     ["119813141112551"] = true,
     ["80008594862427"] = true
 }
--- =========================
--- UTILS
--- =========================
+
+   
 local function normalizeAnimationId(id)
     return id:match("id=(%d+)") or id:match("%d+")
 end
@@ -164,43 +160,68 @@ local function getDistance(player)
     return (root.Position - localRoot.Position).Magnitude
 end
 
--- =========================
--- BLOCK LOGIC
--- =========================
+-- HIGHLIGHT
+local function addHighlight(character)
+    if not ATTACK_HIGHLIGHT_ENABLED then return end
+    if character:FindFirstChild("AttackHighlight") then return end
+
+    local hl = Instance.new("Highlight")
+    hl.Name = "AttackHighlight"
+    hl.FillColor = HIGHLIGHT_COLOR
+    hl.OutlineColor = HIGHLIGHT_COLOR
+    hl.FillTransparency = HIGHLIGHT_FILL_TRANSPARENCY
+    hl.OutlineTransparency = HIGHLIGHT_OUTLINE_TRANSPARENCY
+    hl.Parent = character
+end
+
+local function removeHighlight(character)
+    local hl = character:FindFirstChild("AttackHighlight")
+    if hl then
+        hl:Destroy()
+    end
+end
+
 local function block(animTrack)
-    if Config.BlockPressDelay > 0 then
-        task.wait(Config.BlockPressDelay / 1000)
+    if BLOCK_DELAY > 0 then
+        task.wait(BLOCK_DELAY / 1000)
     end
 
     VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
 
     animTrack.Stopped:Wait()
 
-    if Config.BlockReleaseDelay > 0 then
-        task.wait(Config.BlockReleaseDelay / 1000)
+    if BLOCK_RELEASE_DELAY > 0 then
+        task.wait(BLOCK_RELEASE_DELAY / 1000)
     end
 
     VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
 end
 
 local function handleAnimation(player, animTrack)
-    if not Config.Enabled then return end
+    if not ENABLED then return end
     if player == LOCAL_PLAYER then return end
     if UserInputService:GetFocusedTextBox() then return end
 
     local animId = normalizeAnimationId(animTrack.Animation.AnimationId)
     if SAFE_ANIMATIONS[animId] then return end
+    if getDistance(player) > RADIUS then return end
 
-    if getDistance(player) > Config.Radius then return end
+    local char = player.Character
+    if char then
+        addHighlight(char)
+    end
+
+    animTrack.Stopped:Connect(function()
+        if char then
+            removeHighlight(char)
+        end
+    end)
 
     task.spawn(function()
         block(animTrack)
     end)
 end
 
--- =========================
--- PLAYER TRACKING
--- =========================
 local function trackPlayer(player)
     local function onCharacter(character)
         local humanoid = character:WaitForChild("Humanoid")
@@ -218,20 +239,16 @@ local function trackPlayer(player)
     player.CharacterAdded:Connect(onCharacter)
 end
 
--- =========================
--- TOGGLE KEY
--- =========================
+-- TOGGLE AUTO BLOCK
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if input.KeyCode == Config.ToggleKey then
-        Config.Enabled = not Config.Enabled
-        warn("AutoBlock:", Config.Enabled and "ON" or "OFF")
+    if input.KeyCode == TOGGLE_KEY then
+        ENABLED = not ENABLED
+        warn("AutoBlock:", ENABLED and "ON" or "OFF")
     end
 end)
 
--- =========================
 -- INIT
--- =========================
 for _, plr in ipairs(Players:GetPlayers()) do
     trackPlayer(plr)
 end
