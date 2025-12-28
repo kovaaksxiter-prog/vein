@@ -1,28 +1,35 @@
--- AUTO BLOCKER NO GUI VERSION
+-- AUTO COMBAT CORE (NO GUI)
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
+local RunService = game:GetService("RunService")
 
 local LOCAL_PLAYER = Players.LocalPlayer
 
--- CONFIG
-local ENABLED = true
-local RADIUS = 11
-local BLOCK_DELAY = 0 -- ms
-local BLOCK_RELEASE_DELAY = 0 -- ms
-local TOGGLE_KEY = Enum.KeyCode.B
+-- ================= CONFIG =================
+local CONFIG = {
+    AutoBlock = true,
+    AutoClash = true,
 
--- ATTACK HIGHLIGHT CONFIG
-local ATTACK_HIGHLIGHT_ENABLED = true
-local HIGHLIGHT_COLOR = Color3.fromRGB(255, 0, 0)
-local HIGHLIGHT_FILL_TRANSPARENCY = 0.5
-local HIGHLIGHT_OUTLINE_TRANSPARENCY = 0
+    BlockRadius = 11,
+
+    BlockPressDelay = 0,
+    BlockReleaseDelay = 0,
+
+    ClashKey = Enum.KeyCode.F, -- MUDA AQUI
+
+    IgnoreOutsideArena = true,
+    ArenaPartName = "Arena", -- MUDA PRO NOME REAL
+
+    DisableWhenAFK = true,
+    DisableEndRound = true
+}
 
 -- SAFE ANIMATIONS
 local SAFE_ANIMATIONS = {
-    
-["180426354"] = true,
+
+    ["180426354"] = true,
     ["180435792"] = true,
     ["180435557"] = true,
     ["180435571"] = true,
@@ -143,114 +150,133 @@ local SAFE_ANIMATIONS = {
     ["80008594862427"] = true
 }
 
-   
-local function normalizeAnimationId(id)
+-- ================= UTILS =================
+local function normalizeId(id)
     return id:match("id=(%d+)") or id:match("%d+")
 end
 
-local function getDistance(player)
-    local char = player.Character
-    local localChar = LOCAL_PLAYER.Character
-    if not (char and localChar) then return math.huge end
-
-    local root = char:FindFirstChild("HumanoidRootPart")
-    local localRoot = localChar:FindFirstChild("HumanoidRootPart")
-    if not (root and localRoot) then return math.huge end
-
-    return (root.Position - localRoot.Position).Magnitude
+local function getRoot(char)
+    return char and char:FindFirstChild("HumanoidRootPart")
 end
 
--- HIGHLIGHT
-local function addHighlight(character)
-    if not ATTACK_HIGHLIGHT_ENABLED then return end
-    if character:FindFirstChild("AttackHighlight") then return end
-
-    local hl = Instance.new("Highlight")
-    hl.Name = "AttackHighlight"
-    hl.FillColor = HIGHLIGHT_COLOR
-    hl.OutlineColor = HIGHLIGHT_COLOR
-    hl.FillTransparency = HIGHLIGHT_FILL_TRANSPARENCY
-    hl.OutlineTransparency = HIGHLIGHT_OUTLINE_TRANSPARENCY
-    hl.Parent = character
+local function distance(p1, p2)
+    return (p1.Position - p2.Position).Magnitude
 end
 
-local function removeHighlight(character)
-    local hl = character:FindFirstChild("AttackHighlight")
-    if hl then
-        hl:Destroy()
-    end
+-- ================= ARENA CHECK =================
+local ArenaPart = workspace:FindFirstChild(CONFIG.ArenaPartName)
+
+local function inArena(char)
+    if not CONFIG.IgnoreOutsideArena then return true end
+    if not ArenaPart then return true end
+
+    local root = getRoot(char)
+    if not root then return false end
+
+    local pos = ArenaPart.CFrame:PointToObjectSpace(root.Position)
+    local size = ArenaPart.Size / 2
+
+    return math.abs(pos.X) <= size.X
+        and math.abs(pos.Y) <= size.Y
+        and math.abs(pos.Z) <= size.Z
 end
 
-local function block(animTrack)
-    if BLOCK_DELAY > 0 then
-        task.wait(BLOCK_DELAY / 1000)
+-- ================= AFK CHECK =================
+local function isAFK(player)
+    if not CONFIG.DisableWhenAFK then return false end
+
+    local afk = player:FindFirstChild("AFK")
+    if afk and afk.Value == true then
+        return true
     end
 
-    VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-
-    animTrack.Stopped:Wait()
-
-    if BLOCK_RELEASE_DELAY > 0 then
-        task.wait(BLOCK_RELEASE_DELAY / 1000)
-    end
-
-    VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    return false
 end
 
-local function handleAnimation(player, animTrack)
-    if not ENABLED then return end
+-- ================= END ROUND CHECK =================
+local function endRound()
+    if not CONFIG.DisableEndRound then return false end
+    local char = LOCAL_PLAYER.Character
+    local hum = char and char:FindFirstChild("Humanoid")
+    return hum and hum.Health <= 0
+end
+
+-- ================= BLOCK =================
+local function doBlock(track)
+    task.wait(CONFIG.BlockPressDelay)
+    VirtualUser:Button2Down(Vector2.new(), workspace.CurrentCamera.CFrame)
+    track.Stopped:Wait()
+    task.wait(CONFIG.BlockReleaseDelay)
+    VirtualUser:Button2Up(Vector2.new(), workspace.CurrentCamera.CFrame)
+end
+
+-- ================= AUTO CLASH =================
+local ClashHeld = false
+
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == CONFIG.ClashKey then
+        ClashHeld = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.KeyCode == CONFIG.ClashKey then
+        ClashHeld = false
+    end
+end)
+
+-- ================= HANDLE ANIMATION =================
+local function handleAnimation(player, track)
+    if not CONFIG.AutoBlock then return end
     if player == LOCAL_PLAYER then return end
+    if endRound() then return end
+    if isAFK(LOCAL_PLAYER) then return end
     if UserInputService:GetFocusedTextBox() then return end
 
-    local animId = normalizeAnimationId(animTrack.Animation.AnimationId)
-    if SAFE_ANIMATIONS[animId] then return end
-    if getDistance(player) > RADIUS then return end
-
     local char = player.Character
-    if char then
-        addHighlight(char)
-    end
+    local localChar = LOCAL_PLAYER.Character
+    if not (char and localChar) then return end
 
-    animTrack.Stopped:Connect(function()
-        if char then
-            removeHighlight(char)
-        end
-    end)
+    if not inArena(char) or not inArena(localChar) then return end
+
+    local id = normalizeId(track.Animation.AnimationId)
+    if SAFE_ANIMATIONS[id] then return end
+
+    local r1 = getRoot(char)
+    local r2 = getRoot(localChar)
+    if not (r1 and r2) then return end
+
+    if distance(r1, r2) > CONFIG.BlockRadius then return end
 
     task.spawn(function()
-        block(animTrack)
+        if CONFIG.AutoClash and ClashHeld then
+            VirtualUser:Button1Down(Vector2.new(), workspace.CurrentCamera.CFrame)
+            task.wait(0.05)
+            VirtualUser:Button1Up(Vector2.new(), workspace.CurrentCamera.CFrame)
+        else
+            doBlock(track)
+        end
     end)
 end
 
+-- ================= TRACK PLAYERS =================
 local function trackPlayer(player)
-    local function onCharacter(character)
-        local humanoid = character:WaitForChild("Humanoid")
-        local animator = humanoid:WaitForChild("Animator")
+    local function onChar(char)
+        local hum = char:WaitForChild("Humanoid")
+        local animator = hum:WaitForChild("Animator")
 
         animator.AnimationPlayed:Connect(function(track)
             handleAnimation(player, track)
         end)
     end
 
-    if player.Character then
-        onCharacter(player.Character)
-    end
-
-    player.CharacterAdded:Connect(onCharacter)
+    if player.Character then onChar(player.Character) end
+    player.CharacterAdded:Connect(onChar)
 end
 
--- TOGGLE AUTO BLOCK
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == TOGGLE_KEY then
-        ENABLED = not ENABLED
-        warn("AutoBlock:", ENABLED and "ON" or "OFF")
-    end
-end)
-
--- INIT
-for _, plr in ipairs(Players:GetPlayers()) do
-    trackPlayer(plr)
+for _, p in ipairs(Players:GetPlayers()) do
+    trackPlayer(p)
 end
 
 Players.PlayerAdded:Connect(trackPlayer)
